@@ -1,0 +1,10 @@
+#+options: toc:2 num:nil
+#+title: Kaggle: Digit Recognizer competition
+
+* Overview
+This repo provides Python code to obtain predictions for the [digit
+recognizer](https://www.kaggle.com/competitions/digit-recognizer/overview)
+Kaggle competition.
+
+
+
