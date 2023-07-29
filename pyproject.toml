@@ -1,6 +1,6 @@
 [project]
 name = "kaggland_digrec"
-version = "0.1.0"
+version = "0.1.1"
 authors = [
     {name="Gabriele Beltramo", email="hello@gbeltramo.com"},
 ]
@@ -18,7 +18,7 @@ build-backend = "setuptools.build_meta"
 
 
 [tool.bumpver]
-current_version = "0.1.0"
+current_version = "0.1.1"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message  = "Bump version {old_version} -> {new_version}"
 commit          = true

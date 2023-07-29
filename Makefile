@@ -1,5 +1,5 @@
 DIST_NAME := kaggland_digrec
-VERSION := 0.1.0
+VERSION := 0.1.1
 .PHONY: all build install test clean
 all: build install test
 
