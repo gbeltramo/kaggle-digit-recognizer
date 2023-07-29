@@ -1,0 +1,31 @@
+[project]
+name = "kaggland_digrec"
+version = "0.1.0"
+authors = [
+    {name="Gabriele Beltramo", email="hello@gbeltramo.com"},
+]
+description = "Code for the Kaggle Digit Recognizer competition."
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+]
+
+[build-system]
+requires = ["setuptools>=67.0.0"]
+build-backend = "setuptools.build_meta"
+
+
+[tool.bumpver]
+current_version = "0.1.0"
+version_pattern = "MAJOR.MINOR.PATCH"
+commit_message  = "Bump version {old_version} -> {new_version}"
+commit          = true
+tag             = true
+push            = false
+
+
+[tool.bumpver.file_patterns]
+"pyproject.toml" = ['current_version = "{version}"', 'version = "{version}"']
+"Makefile" = ['VERSION := {version}']
