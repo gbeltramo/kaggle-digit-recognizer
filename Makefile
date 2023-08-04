@@ -1,20 +1,29 @@
 DIST_NAME := kaggland_digrec
 VERSION := 0.1.1
-.PHONY: all build install test clean
+PYTHON := $(HOME)/mambaforge/envs/ka-pytorch/bin/python
+
+.PHONY: all build install install-editable test activate clean 
 all: build install test
 
+
 build:
-	python -m build
+	$(PYTHON) -m build
 
 install:
-	python -m pip install $(wildcard ./dist/$(DIST_NAME)-$(VERSION)*.whl) --force-reinstall -v
+	$(PYTHON) -m pip install $(wildcard ./dist/$(DIST_NAME)-$(VERSION)*.whl) --force-reinstall -v
+
+install-editable:
+	$(PYTHON) -m pip install -v --editable .
 
 test:
-	python -m pytest -v test/
+	$(PYTHON) -m pytest -v -rP test/
 
 format:
-	python -m black --line-length 100 --target-version py310 .
+	$(PYTHON) -m black --line-length 100 --target-version py310 .
+
+activate:
+	mamba deactivate
+	mamba activate ka-pytorch
 
 clean:
 	rm -rf dist/
-
