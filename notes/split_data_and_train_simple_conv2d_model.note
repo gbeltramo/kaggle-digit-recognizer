@@ -1,0 +1,83 @@
+; -*- mode: org; -*-
+#+options: toc:2 num:nil
+#+startup: overview
+#+property: header-args:ein-python :results value :session http://127.0.0.1:8888/ein_server.ipynb
+#+title: MNIST PyTorch ~conv2d~ model
+
+* Overview
+In this document we
+
+- read the training data and plot it, checking labels
+- reproducibly split the training data
+- make simplest model and train it for one epoch on CPU and GPU
+- test logging with [[https://mlflow.org/docs/latest/index.html][MLflow]]
+ 
+* Packages
+In this section, we import relevant Python packages from the ~conda~
+environment pinned in ~/dev/conda_env.yaml~
+
+Including ~kaggland.digrec~
+
+#+NAME: f59a0093-75aa-4763-82fb-017d97ef4eb0
+#+begin_src ein-python
+  import pathlib
+
+  import numpy as np
+  import torch
+  import torch.nn
+
+  from sklearn.model_selection import StratifiedGroupKFold
+  import matplotlib.pyplot as plt
+  %matplotlib inline
+  import mlflow
+
+  # NOTE not included in /dev/conda_env.yaml
+  import kaggland.digrec.data.load as load
+#+end_src
+
+* Data Split
+Write and test util functions used to split the training data.
+
+#+NAME: 3ecb7f09-2612-4c26-b61b-ede24bc9bd10
+#+begin_src ein-python
+  train_data = pathlib.Path.home() / "data" / "kaggle" / "digit-recognizer" / "train.csv"
+
+  images, labels = load.load(str(train_data))
+
+  def create_train_val_folds(size: int, num_folds: int, num_val_folds: int):
+    cross_val_folds = StratifiedGroupKFold(n_splits=10, shuffle=True, random_state=0)
+
+    indices_folds = []
+    for _, idx_ith_fold in cross_val_folds.split(labels, y=labels, groups=labels):
+        indices_folds.append(idx_ith_fold)
+
+    num_train_folds = num_folds - num_val_folds
+    train_indices = np.concatenate(indices_folds[:num_train_folds])
+    val_folds = indices_folds[num_train_folds:]
+    return train_indices, val_folds
+
+  train_indices, val_folds = create_train_val_folds(len(labels), 10, 3)
+  len(train_indices), len(val_folds), len(train_indices) + sum(len(el) for el in val_folds)
+#+end_src
+
+Are the indices in the folds all the indices?
+
+#+NAME: 043ed403-f81e-48a6-a667-77dd01ea7046
+#+begin_src ein-python
+  indices_folds = np.concatenate((train_indices, *val_folds))
+  (np.unique(indices_folds) == np.arange(len(indices_folds))).all()
+#+end_src
+
+* Sanity Check Plot
+Check few images and labels.
+
+#+NAME: de25ebd7-1db1-4ee6-9a02-bbc8c8851dce
+#+begin_src ein-python
+  num = 5
+  fig, ax = plt.subplots(1, num, figsize=(num*4, 4))
+  for i in range(num):
+      ax[i].imshow(images[i], cmap="gray")
+      ax[i].set(title=f"{labels[i]}")
+#+end_src
+
+* As-simple-as-possible model

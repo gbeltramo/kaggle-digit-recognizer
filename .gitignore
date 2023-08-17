@@ -1,3 +1,10 @@
+# directories
 /dist
+ein-images/
+__pycache__/
+.ipynb_checkpoints/
 *.egg-info/
-*__pycache__*
+
+# files to be excluded
+*.ipynb
+!ein_server.ipynb

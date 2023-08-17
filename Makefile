@@ -27,3 +27,4 @@ activate:
 
 clean:
 	rm -rf dist/
+	rm -rf .pytest_cache/
