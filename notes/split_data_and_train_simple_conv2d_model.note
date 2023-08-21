@@ -11,7 +11,10 @@ In this document we
 - reproducibly split the training data
 - make simplest model and train it for one epoch on CPU and GPU
 - test logging with [[https://mlflow.org/docs/latest/index.html][MLflow]]
- 
+
+*Note* Remember to eval ~ein:jupyter_server_start~ and "Open" the ~ein_server~
+notebook.
+   
 * Packages
 In this section, we import relevant Python packages from the ~conda~
 environment pinned in ~/dev/conda_env.yaml~
@@ -68,7 +71,7 @@ Are the indices in the folds all the indices?
   (np.unique(indices_folds) == np.arange(len(indices_folds))).all()
 #+end_src
 
-* Sanity Check Plot
+** Sanity Check Plot
 Check few images and labels.
 
 #+NAME: de25ebd7-1db1-4ee6-9a02-bbc8c8851dce
@@ -78,6 +81,117 @@ Check few images and labels.
   for i in range(num):
       ax[i].imshow(images[i], cmap="gray")
       ax[i].set(title=f"{labels[i]}")
+  fig.show()
+#+end_src
+
+* Data loading
+Using ~torch.utils.data.Dataset~ and ~torch.utils.data.Dataloader~.
+
+#+NAME: 952c8b2c-8ebc-4b79-b342-927556729df5
+#+begin_src ein-python
+  import torch.utils.data
+#+end_src
+
+** MNISTDataset
+*** Transforms
+
+#+NAME: 23274bed-1466-4a56-b387-f66d7191cb10
+#+begin_src ein-python
+  data_transforms = {
+      "train": [], # list of function operating on numpy arrays
+      "test": [],
+  }
+#+end_src
+
+*** Dataset
+Some code from https://sebastianraschka.com/blog/2022/datapipes.html
+
+#+NAME: 9881fc12-c0e2-4d6d-86f7-12f384bad034
+#+begin_src ein-python
+  class MNISTDataset(torch.utils.data.Dataset):
+      def __init__(self, samples: np.ndarray, labels: np.ndarray, transforms=None):
+          assert len(samples) == len(labels)
+
+          self.samples = samples
+          self.labels = labels
+          self.transforms = transforms
+
+      def __getitem__(self, index):
+          sample = self.samples[index]
+
+          if self.transforms is not None:
+              for transform_fn in self.transforms:
+                  image = transform_fn(image)
+
+          return sample, self.labels[index]
+
+      def __len__(self):
+          return len(self.labels)
+
+  train_samples = images[train_indices]
+  train_labels = labels[train_indices]
+
+
+  train_dataset = MNISTDataset(
+      samples=train_samples,
+      labels=train_labels,
+      transforms=data_transforms["train"]
+  )
+
+  len(train_dataset), train_dataset[0][0].shape
+#+end_src
+
+#+NAME: 36dc770e-c9c4-4bf3-9ea8-19a1d23a81b5
+#+begin_src ein-python
+  torch.zeros(size=(5,))
+#+end_src
+
+** torch.utils.data.DataLoader
+#+NAME: 40002dfd-9113-4bea-bf26-58d8d99b1e29
+#+begin_src ein-python :results output
+  torch.manual_seed(100)
+  batch_size = 6
+  dtype_samples = torch.uint8
+
+  def collate_MNIST_mini_batch(batch):
+      batched_samples = torch.zeros(size=(len(batch), *batch[0][0].shape), dtype=dtype_samples)
+      batched_labels = torch.zeros(size=(len(batch),), dtype=torch.uint8)
+      for idx in range(len(batch)):
+          batched_samples[idx] = torch.from_numpy(batch[idx][0])
+          batched_labels[idx] = int(batch[idx][1])
+      return batched_samples, batched_labels
+
+  train_loader = torch.utils.data.DataLoader(
+      dataset=train_dataset,
+      batch_size=batch_size,
+      shuffle=True,
+      drop_last=True,
+      num_workers=1,
+      collate_fn=collate_MNIST_mini_batch,
+  )
+
+  train_iter = iter(train_loader)
+
+  for _ in range(5):
+      batch = next(train_iter)
+      print(len(batch), batch[0].shape, batch[1])
+#+end_src
+
+** Sanity check plot
+
+#+NAME: a7a48af6-30a9-4478-bcaa-0add2513d5a5
+#+begin_src ein-python
+  num = batch_size
+  fig, ax = plt.subplots(1, num, figsize=(num*4, 4))
+  for i, batch in enumerate(train_loader):
+      image = batch[0][0]
+      label = batch[1][0]
+      if i < num:
+          ax[i].imshow(image, cmap="gray")
+          ax[i].set(title=f"{label}")
+      else:
+          break
+  fig.show()
 #+end_src
 
 * As-simple-as-possible model
