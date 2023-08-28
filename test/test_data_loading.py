@@ -6,7 +6,7 @@ train_data = pathlib.Path.home() / "data" / "kaggle" / "digit-recognizer" / "tra
 
 
 def test_read_data():
-    images, labels = kaggland.digrec.data.load.read_data(str(train_data))
+    images, labels = kaggland.digrec.data.load.read_data(train_data)
 
     assert images[0].shape == (28, 28)
     assert images[-1].shape == (28, 28)
@@ -16,14 +16,14 @@ def test_read_data():
 
 
 def test_transform():
-    images, labels = kaggland.digrec.data.load.read_data(str(train_data))
+    images, labels = kaggland.digrec.data.load.read_data(train_data)
     images = kaggland.digrec.data.load.transform(images)
 
     assert isinstance(images, np.ndarray)
 
 
 def test_load():
-    images, labels = kaggland.digrec.data.load.load(str(train_data))
+    images, labels = kaggland.digrec.data.load.load(train_data)
 
     assert images[0].shape == (28, 28)
     assert images[-1].shape == (28, 28)

@@ -21,16 +21,18 @@ environment pinned in ~/dev/conda_env.yaml~
 
 Including ~kaggland.digrec~
 
-#+NAME: f59a0093-75aa-4763-82fb-017d97ef4eb0
+#+NAME: a028d7b1-d5d8-4f99-a77b-5228a716cd6c
 #+begin_src ein-python
   import os
   import pathlib
   import subprocess
   import time
+  from typing import Tuple
 
   import numpy as np
   import torch
   import torch.nn
+  import torch.optim as optim
 
   from omegaconf import OmegaConf as oc
 
@@ -71,7 +73,7 @@ Using [[https://omegaconf.readthedocs.io/en/latest/][OmegaConf]] to create a con
   model_config = {
       "model": {
           "resnet_blocks": {
-              "resnet1": {"kernel_size": (3, 3), "init_fn": "kaiming"},
+              "resnet1": {"in_channels": 1, "out_channels": 20, "kernel_size": (3, 3), "conv_weight_init_fn": "kaiming_normal_"},
           },
       }
   }
@@ -83,7 +85,7 @@ Using [[https://omegaconf.readthedocs.io/en/latest/][OmegaConf]] to create a con
   )
   oc.resolve(config) 
 
-  config, type(config), config.model.resnet_blocks
+  type(config), config.model.resnet_blocks
 #+end_src
 
 * Data Split
@@ -153,6 +155,22 @@ Are the indices in the splits all the indices?
 
   indices_splits = np.concatenate((train_indices, *val_splits))
   (np.unique(indices_splits) == np.arange(len(indices_splits))).all()
+#+end_src
+
+** Util function: compute ~train_images~ mean and standard deviation
+
+#+NAME: d2566e7c-1efa-4026-adf5-1c952d36aca2
+#+begin_src ein-python :results output
+  def compute_mean_std(train_images: np.ndarray, np_type=np.float32) -> Tuple[np.ndarray, np.ndarray]:
+      mean_train_images = np.mean(train_images).astype(np_type)
+      std_train_images = np.std(train_images).astype(np_type)
+      return mean_train_images, std_train_images
+#+end_src
+
+#+NAME: ce76ab9d-e0c8-47e2-ac54-188565fb607a
+#+begin_src ein-python
+  mean_train_images, std_train_images = compute_mean_std(train_images)
+  "mean, std", mean_train_images, std_train_images
 #+end_src
 
 ** Sanity Check Plot
@@ -298,15 +316,38 @@ Experimenting with and testing the performance of ~DataPipes~ in ~torchdata~.
   import torchdata.dataloader2 as dataloader2
   from torchdata.datapipes.map import SequenceWrapper
 
+  from functools import partial
+
+  torch.manual_seed(100)
+  batch_size = 8
+
   train_data, val_data = prepare_data(config.data.path_to_data)
   train_images = train_data["images"]
   train_labels = train_data["labels"]
+  mean_train_images, std_train_images = compute_mean_std(train_images)
 
-  def train_transforms_dp_fn(img_lab):
-      img, lab = img_lab[0], img_lab[1]
-      img = img.astype(np.float32) / 255
-      lab = lab.astype(np.int64)
-      return img_lab
+  def _train_transforms_dp_fn(image_label: Tuple[np.ndarray, np.ndarray],
+                              mean_train_images: float,
+                              std_train_images: float) -> Tuple[np.ndarray, np.ndarray]:
+      image, label = image_label[0], image_label[1]
+      image = (image.astype(np.float32) - mean_train_images) / std_train_images
+      return image, label.astype(np.int64)
+
+  train_transforms_dp_fn = partial(_train_transforms_dp_fn,
+                                   mean_train_images=mean_train_images,
+                                   std_train_images=std_train_images)
+
+  def collate_MNIST_mini_batch(many_images_labels):
+      batched_samples = torch.zeros(size=(len(many_images_labels), *many_images_labels[0][0].shape),
+                                    dtype=torch.float32)
+      batched_labels = torch.zeros(size=(len(many_images_labels),),
+                                   dtype=torch.int64)
+
+      for idx, (image, label) in enumerate(many_images_labels):
+          batched_samples[idx] = torch.from_numpy(image)
+          batched_labels[idx] = int(label)
+
+      return batched_samples.requires_grad_(True), batched_labels
 
   train_dp = (
       SequenceWrapper(train_images)
@@ -325,8 +366,8 @@ conda-forge python-graphviz~)
 
 #+NAME: a05f3d2d-7ba5-4c74-80b5-ad2c4fb08d7d
 #+begin_src ein-python
-  # import torchdata.datapipes.utils as dputils
-  # dp_graph = dputils.to_graph(train_dp)
+  import torchdata.datapipes.utils as dputils
+  dp_graph = dputils.to_graph(train_dp)
   # dp_graph.view()
 #+end_src
 
@@ -334,20 +375,22 @@ conda-forge python-graphviz~)
 #+begin_src ein-python :results output
   torch.manual_seed(100)
   batch_size = 8
-  dtype_samples = torch.uint8
+
   rs = dataloader2.MultiProcessingReadingService(
       num_workers=4,
       worker_prefetch_cnt=0,
       main_prefetch_cnt=0
   )
   dp_train_loader = dataloader2.DataLoader2(datapipe=train_dp, reading_service=rs)
-  dp_train_loader_iter = iter(train_loader)
+  dp_train_loader_iter = iter(dp_train_loader)
 
   for _ in range(2):
       batch = next(dp_train_loader_iter)
-      sample0 = batch[1]
+      images = batch[0]
+      labels = batch[1]
       print(f"type(batch): {type(batch)}, l={len(batch)}")
-      print(f"sample0: (dtype={sample0.dtype}, shape={sample0.shape})")
+      print(f"images: (dtype={images.dtype}, shape={images.shape}, mean={images.mean()})")
+      print(f"labels: (dtype={labels.dtype}, shape={labels.shape})")
       print("---")
 #+end_src
 
@@ -359,11 +402,11 @@ conda-forge python-graphviz~)
 
   fig, ax = plt.subplots(1, num, figsize=(num*4, 4))
   for i, batch in enumerate(dp_train_loader):
-      image = batch[0][0]
+      image = batch[0][0].detach().numpy()
       label = batch[1][0]
       if i < num:
           ax[i].imshow(image, cmap="gray")
-          ax[i].set(title=f"{label}")
+          ax[i].set(title=f"{label}, {image.sum():.3f}, {image.dtype}, {image.mean():.3f}")
       else:
           break
   fig.show()
@@ -421,47 +464,94 @@ Performe check using ~np.unique~
 - ~DataPipes~ allow to plot the preprocessing steps with a ~graphviz~ graph
 
 * As-simple-as-possible model
-Model
+** Configurable ResNet block
+
+#+NAME: 304f701f-25ba-4a4a-8674-3bf575a9f5a3
+#+begin_src ein-python
+  class ResNetBlock(nn.Module):
+      def __init__(self, resnet_block_config):
+          super(ResNetBlock, self).__init__()
+
+          self.conv = nn.Conv2d(
+              in_channels=resnet_block_config.in_channels,
+              out_channels=resnet_block_config.out_channels,
+              kernel_size=resnet_block_config.kernel_size,
+              padding=1,
+              bias=False
+          )
+          self.batch_norm = nn.BatchNorm2d(num_features=out_channels)
+          self.relu = nn.ReLU()
+
+          conv_weight_init_fn = getattr(torch.nn.init, resnet_config.conv_weight_init_fn)
+          conv_weight_init_fn(self.conv.wieght, nonlinearity="relu")
+          torch.nn.init.constant_(self.batch_norm.weight, 0.5)
+          torch.nn.init.zeros_(self.batch_norm.bias)
+
+      def forward(self, x):
+          out = self.conv(x)
+          out = self.batch_norm(out)
+          out = self.relu(out)
+          return out + x
+#+end_src
+
+** Model
+Simplest model to check that everything is working.
+
+#+NAME: 2df2f987-bd8a-4e0a-9d94-fe74c0e7bbbe
+#+begin_src ein-python
+
+  class Conv2dModelV1(nn.Module):
+      def __init__(self, model_config):
+          super(Conv2dModelV1, self).__init__()
+          self.blocks = nn.ModuleList(
+              ResNetBlock(resnet_block_config)
+              for resnet_block_config in model_config.resnet_blocks.values()
+          )
+
+      def forward(self, x):
+          return self.blocks(x)
+
+  model = Conv2dModelV1(config.model)
+#+end_src
+
+** Loss function and optimizer
+
+#+begin_src ein-python
+  loss_fn = nn.CrossEntropyLoss()
+  optimizer = optim.Adam(model.parameters(), lr=1e-1)
+#+end_src
+
+** Training loop main function
 
 #+NAME: fdfea3c4-3556-4d93-90d1-702759d45754
 #+begin_src ein-python
-  import torch
-  import torch.optim as optim
-  import torch.nn as nn
-  import torch.nn.functional as F
-
-  class ConvModelV1(nn.Module):
-
-      def __init__(self):
-          super(ConvModelV1, self).__init__()
-          self.conv1 = nn.Conv2d(1, 20, 5)
-          self.conv2 = nn.Conv2d(20, 20, 5)
-
-      def forward(self, x):
-          x = F.relu(self.conv1(x))
-          return F.relu(self.conv2(x))
-
-  model = ConvModelV1()
-  loss_fn = nn.CrossEntropyLoss()
-
   def training_loop(n_epochs, optimizer, model, train_loader, loss_fn):
+    
       for epoch in range(1, n_epochs+1):
+          cnt = 0
           for batch in train_loader:
+              if cnt > 3: break
+              cnt += 1
               images = batch[0]
-              target = batch[1]
-
+              targets = batch[1]
+              print(f"images: (dtype={images.dtype}, shape={images.shape}), grad={images.requires_grad}")
+              print(f"targets: (dtype={targets.dtype}, shape={targets.shape})")
+              print("model", model, model.forward)
               optimizer.zero_grad()
+            
 
-              output_model = model(images)
-              loss = loss_fn(output_model, target)
-              loss.backward()
+              # output_model = model(images)
+              # loss = loss_fn(output_model, targets)
+              # loss.backward()
 
-              optimizer.step() # "learn"
+              # optimizer.step() # "learn"
 
-              if (epoch % 500) == 0:
-                  print(f"Epoch {epoch}, Loss {loss:.3f}")
+              # if (epoch % 500) == 0:
+              #     print(f"Epoch {epoch}, Loss {loss:.3f}")
+#+end_src
 
-  optimizer = optim.Adam(model.parameters(), lr=1e-1)
+#+NAME: 045e6d9b-7f72-4676-adc8-8b2ccbc573a7
+#+begin_src ein-python :results output
   training_loop(
       n_epochs=1,
       optimizer=optimizer,
@@ -470,4 +560,3 @@ Model
       loss_fn=loss_fn,
   )
 #+end_src
-
