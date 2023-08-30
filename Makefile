@@ -16,7 +16,7 @@ install-editable:
 	$(PYTHON) -m pip install -v --editable .
 
 test:
-	$(PYTHON) -m pytest -v -rP test/
+	$(PYTHON) -m pytest --pyargs kaggland.digrec -v -rP
 
 format:
 	$(PYTHON) -m black --line-length 100 --target-version py310 .

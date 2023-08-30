@@ -27,15 +27,18 @@ Including ~kaggland.digrec~
   import pathlib
   import subprocess
   import time
+
   from typing import Tuple
+  from functools import partial
 
   import numpy as np
   import torch
-  import torch.nn
+  import torchdata.dataloader2 as dataloader2
+  from torchdata.datapipes.map import SequenceWrapper
+  import torch.nn as nn
   import torch.optim as optim
 
   from omegaconf import OmegaConf as oc
-
   from sklearn.model_selection import StratifiedKFold
   import matplotlib.pyplot as plt
   %matplotlib inline
@@ -49,7 +52,7 @@ Including ~kaggland.digrec~
 Using [[https://omegaconf.readthedocs.io/en/latest/][OmegaConf]] to create a config that can use the ~${other.field}~ syntax and
 ~OmegaConf.resolve()~ to interpolate configuration values.
 
-#+NAME: 8c6d20ec-8b1a-43dc-9acc-8640cccc1f40
+#+NAME: b6aa5b80-111b-4680-b785-96ce42024b34
 #+begin_src ein-python
   python_version = subprocess.run(
       ["python", "--version"],
@@ -60,21 +63,66 @@ Using [[https://omegaconf.readthedocs.io/en/latest/][OmegaConf]] to create a con
           "python_version" : python_version,
           "numpy_version" : str(np.__version__),
           "torch_version" : str(torch.__version__),
-      }
+      },
+      "use_cuda": True,
   }
+
   data_config = {
       "data": {
           "path_to_data" : pathlib.Path.home() / "data" / "kaggle" / "digit-recognizer" / "train.csv",
           "num_splits": 10,
           "num_val_splits": 3,
-      }
+          "training": {
+              "batch_size": 64,
+              "num_workers": 2,
+          },
+          "validation": {
+              "batch_size": 64,
+              "num_workers": 2,
+          },
+      },
   }
+#+end_src
 
+#+NAME: 8c6d20ec-8b1a-43dc-9acc-8640cccc1f40
+#+begin_src ein-python
   model_config = {
       "model": {
-          "resnet_blocks": {
-              "resnet1": {"in_channels": 1, "out_channels": 20, "kernel_size": (3, 3), "conv_weight_init_fn": "kaiming_normal_"},
-          },
+          "blocks": [
+              {"name": "resnet1",
+               "params": {
+                   "in_channels": 1,
+                   "out_channels": 64,
+                   "kernel_size": (5, 5),
+                   "padding": 2,
+                   "conv_weight_init_fn": "kaiming_normal_"},
+               },
+              {"name": "resnet2",
+               "params": {
+                   "in_channels": 64,
+                   "out_channels": 32,
+                   "kernel_size": (3, 3),
+                   "padding": 1,
+                   "conv_weight_init_fn": "kaiming_normal_"},
+               },
+              {"name": "resnet3",
+               "params": {
+                   "in_channels": 32,
+                   "out_channels": 16,
+                   "kernel_size": (3, 3),
+                   "padding": 1,
+                   "conv_weight_init_fn": "kaiming_normal_"},
+               },
+              {"name": "resnet4",
+               "params": {
+                   "in_channels": 16,
+                   "out_channels": "${model.num_out_channels}",
+                   "kernel_size": (3, 3),
+                   "padding": 1,
+                   "conv_weight_init_fn": "kaiming_normal_"},
+               },
+          ],
+          "num_out_channels": 10,
       }
   }
 
@@ -85,15 +133,17 @@ Using [[https://omegaconf.readthedocs.io/en/latest/][OmegaConf]] to create a con
   )
   oc.resolve(config) 
 
-  type(config), config.model.resnet_blocks
+  config.data, config.model.blocks
 #+end_src
 
 * Data Split
 Write and test util functions used to split the training data.
 
+** Make split and prepare data
+
 #+NAME: 3ecb7f09-2612-4c26-b61b-ede24bc9bd10
 #+begin_src ein-python :results output
-  def prepare_data(path_to_data: pathlib.PosixPath):
+  def make_data(path_to_data: pathlib.PosixPath):
     """Read and split the MNIST dataset."""
 
     assert isinstance(path_to_data, pathlib.PosixPath), f"{path_to_data=} needs to be a pathlib.Path"
@@ -135,7 +185,7 @@ Write and test util functions used to split the training data.
 
     return train_indices, val_splits
 
-  train_data, val_data = prepare_data(config.data.path_to_data)
+  train_data, val_data = make_data(config.data.path_to_data)
   train_images = train_data["images"]
   train_labels = train_data["labels"]
 
@@ -167,13 +217,7 @@ Are the indices in the splits all the indices?
       return mean_train_images, std_train_images
 #+end_src
 
-#+NAME: ce76ab9d-e0c8-47e2-ac54-188565fb607a
-#+begin_src ein-python
-  mean_train_images, std_train_images = compute_mean_std(train_images)
-  "mean, std", mean_train_images, std_train_images
-#+end_src
-
-** Sanity Check Plot
+** Sanity Check Plots
 Check few images and labels.
 
 #+NAME: de25ebd7-1db1-4ee6-9a02-bbc8c8851dce
@@ -183,6 +227,20 @@ Check few images and labels.
   for i in range(num):
       img = train_images[i]
       lab = train_labels[i]
+      ax[i].imshow(img, cmap="gray")
+      ax[i].set(title=f"{lab}")
+  fig.show()
+#+end_src
+
+#+NAME: f0d06379-0215-4111-af4c-c81f1b62ae37
+#+begin_src ein-python
+  num = 12
+  val_images = val_data[0]["images"]
+  val_labels = val_data[0]["labels"]
+  fig, ax = plt.subplots(1, num, figsize=(num*2, 2))
+  for i in range(num):
+      img = val_images[i]
+      lab = val_labels[i]
       ax[i].imshow(img, cmap="gray")
       ax[i].set(title=f"{lab}")
   fig.show()
@@ -311,56 +369,119 @@ Some code from https://sebastianraschka.com/blog/2022/datapipes.html
 * Other data loading method: ~DataPipe~ and ~DataLoader2~
 Experimenting with and testing the performance of ~DataPipes~ in ~torchdata~.
 
-#+NAME: 0ad50ee0-b595-497b-bb1a-b8d0ff9b7f59
+** Preprocessing transforms
+
+#+NAME: eceb860a-e657-46d6-be6f-5fbb0544b212
 #+begin_src ein-python
-  import torchdata.dataloader2 as dataloader2
-  from torchdata.datapipes.map import SequenceWrapper
+  def prepro_normalize_images(image: np.ndarray, mean_train_images: float, std_train_images: float) -> np.ndarray:
+      normalized_image = (image.astype(np.float32) - mean_train_images) / std_train_images
+      return normalized_image
 
-  from functools import partial
-
-  torch.manual_seed(100)
-  batch_size = 8
-
-  train_data, val_data = prepare_data(config.data.path_to_data)
-  train_images = train_data["images"]
-  train_labels = train_data["labels"]
-  mean_train_images, std_train_images = compute_mean_std(train_images)
-
-  def _train_transforms_dp_fn(image_label: Tuple[np.ndarray, np.ndarray],
-                              mean_train_images: float,
-                              std_train_images: float) -> Tuple[np.ndarray, np.ndarray]:
+  def prepro_transforms_fn(image_label: Tuple[np.ndarray, np.ndarray], mean_train_images: float, std_train_images: float) -> Tuple[np.ndarray, np.ndarray]:
       image, label = image_label[0], image_label[1]
-      image = (image.astype(np.float32) - mean_train_images) / std_train_images
+      image = prepro_normalize_images(image, mean_train_images, std_train_images)
       return image, label.astype(np.int64)
+#+end_src
 
-  train_transforms_dp_fn = partial(_train_transforms_dp_fn,
-                                   mean_train_images=mean_train_images,
-                                   std_train_images=std_train_images)
+** Augmentation transforms
 
+#+NAME: cf829484-a80e-4e77-a460-ad41c5df79ab
+#+begin_src ein-python
+  pass
+#+end_src
+
+** Collate function
+
+#+NAME: d3e5d2dc-f7c5-4019-9a1b-232ea46985af
+#+begin_src ein-python
   def collate_MNIST_mini_batch(many_images_labels):
-      batched_samples = torch.zeros(size=(len(many_images_labels), *many_images_labels[0][0].shape),
+      batched_samples = torch.zeros(size=(len(many_images_labels), 1, *many_images_labels[0][0].shape),
                                     dtype=torch.float32)
       batched_labels = torch.zeros(size=(len(many_images_labels),),
                                    dtype=torch.int64)
 
       for idx, (image, label) in enumerate(many_images_labels):
-          batched_samples[idx] = torch.from_numpy(image)
+          batched_samples[idx, 0] = torch.from_numpy(image)
           batched_labels[idx] = int(label)
 
       return batched_samples.requires_grad_(True), batched_labels
-
-  train_dp = (
-      SequenceWrapper(train_images)
-      .zip(SequenceWrapper(train_labels))
-      .shuffle()
-      .set_seed(0)
-      .sharding_filter()
-      .map(train_transforms_dp_fn)
-      .batch(8)
-      .collate(collate_MNIST_mini_batch)
-  )
 #+end_src
 
+** Training/Validation DataPipes
+
+#+NAME: 0ad50ee0-b595-497b-bb1a-b8d0ff9b7f59
+#+begin_src ein-python
+  def make_MNIST_training_datapipe(train_data, data_config, random_state: int=100):
+      """Make a datapipe for training data."""
+
+      torch.manual_seed(random_state)
+
+      train_images = train_data["images"]
+      train_labels = train_data["labels"]
+      mean_train_images, std_train_images = compute_mean_std(train_images)
+
+      training_datapipe = (
+          SequenceWrapper(train_images)
+          .zip(SequenceWrapper(train_labels))
+          .shuffle()
+          .set_seed(0)
+          .sharding_filter()
+          .map(partial(prepro_transforms_fn,
+                       mean_train_images=mean_train_images,
+                       std_train_images=std_train_images))
+          .batch(data_config.training.batch_size)
+          .collate(collate_MNIST_mini_batch)
+      )
+
+      return training_datapipe
+
+  def make_MNIST_validation_datapipe(train_data, val_data, data_config, idx_val_split: int=0, random_state: int=100):
+      """Make DataPipe for validation data, using the validation split at index `idx_val_split`."""
+    
+      torch.manual_seed(random_state)
+
+      train_images = train_data["images"]
+      train_labels = train_data["labels"]
+      val_images = val_data[idx_val_split]["images"]
+      val_labels = val_data[idx_val_split]["labels"]
+      mean_train_images, std_train_images = compute_mean_std(train_images)
+
+      validation_datapipe = (
+          SequenceWrapper(val_images)
+          .zip(SequenceWrapper(val_labels))
+          .shuffle()
+          .set_seed(0)
+          .sharding_filter()
+          .map(partial(prepro_transforms_fn,
+                       mean_train_images=mean_train_images,
+                       std_train_images=std_train_images))
+          .batch(data_config.validation.batch_size)
+          .collate(collate_MNIST_mini_batch)
+      )
+
+      return validation_datapipe
+
+  def make_dataloader2(datapipe, num_workers: int=1):
+      """Make a DataLoader2 using a DataPipe."""
+
+      reading_service = dataloader2.MultiProcessingReadingService(
+          num_workers=num_workers,
+          worker_prefetch_cnt=0,
+          main_prefetch_cnt=0
+      )
+
+      loader = dataloader2.DataLoader2(datapipe=datapipe, reading_service=reading_service)
+
+      return loader
+
+  train_data, val_data = make_data(config.data.path_to_data)
+  train_dp = make_MNIST_training_datapipe(train_data, config.data, random_state=100)
+  val0_dp = make_MNIST_validation_datapipe(train_data, val_data=val_data, idx_val_split=0, data_config=config.data, random_state=100)
+  train_loader = make_dataloader2(train_dp, num_workers=config.data.training.num_workers)
+  val0_loader = make_dataloader2(val0_dp, num_workers=config.data.validation.num_workers)
+#+end_src
+
+*** DAG training DataPipe
 View the ~DataPipe~ DAG (using ~graphviz~ which requires ~conda install -c
 conda-forge python-graphviz~)
 
@@ -371,38 +492,37 @@ conda-forge python-graphviz~)
   # dp_graph.view()
 #+end_src
 
+*** Testing training DataLoader2
+
 #+NAME: 615561a4-42c9-4c99-93c2-1b4609128681
 #+begin_src ein-python :results output
-  torch.manual_seed(100)
-  batch_size = 8
+  train_data, val_data = make_data(config.data.path_to_data)
+  train_dp = make_MNIST_training_datapipe(train_data, config.data, random_state=100)
+  val0_dp = make_MNIST_validation_datapipe(train_data, val_data=val_data, idx_val_split=0, data_config=config.data, random_state=100)
+  train_loader = make_dataloader2(train_dp, num_workers=config.data.training.num_workers)
+  val0_loader = make_dataloader2(val0_dp, num_workers=config.data.validation.num_workers)
 
-  rs = dataloader2.MultiProcessingReadingService(
-      num_workers=4,
-      worker_prefetch_cnt=0,
-      main_prefetch_cnt=0
-  )
-  dp_train_loader = dataloader2.DataLoader2(datapipe=train_dp, reading_service=rs)
-  dp_train_loader_iter = iter(dp_train_loader)
+  dp_train_loader_iter = iter(train_loader)
 
   for _ in range(2):
       batch = next(dp_train_loader_iter)
       images = batch[0]
       labels = batch[1]
       print(f"type(batch): {type(batch)}, l={len(batch)}")
-      print(f"images: (dtype={images.dtype}, shape={images.shape}, mean={images.mean()})")
+      print(f"images: (dtype={images.dtype}, shape={images.shape}, mean={images.mean():.3f})")
       print(f"labels: (dtype={labels.dtype}, shape={labels.shape})")
       print("---")
 #+end_src
 
-** Sanity check plot
+*** Sanity check plots
 
 #+NAME: a7a48af6-30a9-4478-bcaa-0add2513d5a5
 #+begin_src ein-python
   num = 5
 
   fig, ax = plt.subplots(1, num, figsize=(num*4, 4))
-  for i, batch in enumerate(dp_train_loader):
-      image = batch[0][0].detach().numpy()
+  for i, batch in enumerate(train_loader):
+      image = batch[0][0][0].detach().numpy()
       label = batch[1][0]
       if i < num:
           ax[i].imshow(image, cmap="gray")
@@ -412,7 +532,23 @@ conda-forge python-graphviz~)
   fig.show()
 #+end_src
 
-** Sanity check: ~DataLoader2~ returns same amounts of digits?
+#+NAME: 8c3942b7-a055-4a1d-83e2-03f18d11bf6a
+#+begin_src ein-python
+  num = 5
+
+  fig, ax = plt.subplots(1, num, figsize=(num*4, 4))
+  for i, batch in enumerate(val0_loader):
+      image = batch[0][0][0].detach().numpy()
+      label = batch[1][0]
+      if i < num:
+          ax[i].imshow(image, cmap="gray")
+          ax[i].set(title=f"{label}, {image.sum():.3f}, {image.dtype}, {image.mean():.3f}")
+      else:
+          break
+  fig.show()
+#+end_src
+
+*** Sanity check: ~DataLoader2~ returns same amounts of digits?
 Get all ~DataPipe~ labels
 
 #+NAME: 15243c93-0247-4e03-91d2-1d5fa1ff161b
@@ -438,7 +574,7 @@ Performe check using ~np.unique~
   print(f"Input lab -> u3: {u3}, counts: {cnt3}")
 #+end_src
 
-** Sanity check: time for one epoch ~DataPipe~
+*** Sanity check: time for one epoch ~DataPipe~
 
 #+NAME: 179e8345-da5e-4676-b3e9-a8467c49a79b
 #+begin_src ein-python :results output
@@ -446,7 +582,7 @@ Performe check using ~np.unique~
 
   total = 0
   for batch in dp_train_loader:
-      images = batch[0]
+      images = batch[0][0]
       total += images[0][14, 10:12].sum()
 
   end_time = time.time()
@@ -455,7 +591,7 @@ Performe check using ~np.unique~
   print(f"Total: {total}")
 #+end_src
 
-** Conclusions of comparison between ~Dataset/DataLoader~ and ~DataPipe/DataLoader2~
+*** Conclusions of comparison between ~Dataset/DataLoader~ and ~DataPipe/DataLoader2~
 - ~DataLoader2~ allows you to write less code and provides the same
   functionality
 - ~DataLoader2~ provides more prefetching parameters
@@ -476,22 +612,32 @@ Performe check using ~np.unique~
               in_channels=resnet_block_config.in_channels,
               out_channels=resnet_block_config.out_channels,
               kernel_size=resnet_block_config.kernel_size,
-              padding=1,
+              padding=resnet_block_config.padding,
               bias=False
           )
-          self.batch_norm = nn.BatchNorm2d(num_features=out_channels)
+          self.conv_1x1 = nn.Conv2d(
+                in_channels=resnet_block_config.in_channels,
+                out_channels=resnet_block_config.out_channels,
+                kernel_size=1,
+                padding=0,
+                bias=False
+            )
+          self.batch_norm = nn.BatchNorm2d(
+              num_features=resnet_block_config.out_channels
+          )
           self.relu = nn.ReLU()
 
-          conv_weight_init_fn = getattr(torch.nn.init, resnet_config.conv_weight_init_fn)
-          conv_weight_init_fn(self.conv.wieght, nonlinearity="relu")
+          conv_weight_init_fn = getattr(torch.nn.init, resnet_block_config.conv_weight_init_fn)
+          conv_weight_init_fn(self.conv.weight, nonlinearity="relu")
           torch.nn.init.constant_(self.batch_norm.weight, 0.5)
           torch.nn.init.zeros_(self.batch_norm.bias)
 
       def forward(self, x):
           out = self.conv(x)
+          out_1x1 = self.conv_1x1(x)
           out = self.batch_norm(out)
           out = self.relu(out)
-          return out + x
+          return out + out_1x1
 #+end_src
 
 ** Model
@@ -499,64 +645,121 @@ Simplest model to check that everything is working.
 
 #+NAME: 2df2f987-bd8a-4e0a-9d94-fe74c0e7bbbe
 #+begin_src ein-python
-
   class Conv2dModelV1(nn.Module):
       def __init__(self, model_config):
           super(Conv2dModelV1, self).__init__()
-          self.blocks = nn.ModuleList(
-              ResNetBlock(resnet_block_config)
-              for resnet_block_config in model_config.resnet_blocks.values()
-          )
+          self.blocks = nn.ModuleDict([
+              (block_config["name"], ResNetBlock(block_config["params"]))
+              for block_config in model_config.blocks
+          ])
+          self.num_out_channels = model_config.num_out_channels
+          self.head = nn.ModuleDict([
+              ("linear_head", nn.Linear(28 * 28 * self.num_out_channels, self.num_out_channels)),
+              ("batch_norm_head", nn.BatchNorm1d(num_features=10)),
+              ("relu_head", nn.ReLU()),
+          ])
 
       def forward(self, x):
-          return self.blocks(x)
+          for block in self.blocks.values():
+              x = block(x)
+
+          x = x.view(x.size(0), -1)
+          for block in self.head.values():
+              x = block(x)
+
+          return x
 
   model = Conv2dModelV1(config.model)
+  # opt_model = torch.compile(model)
+  "num trainable params:", sum(p.numel() for p in model.parameters() if p.requires_grad)
 #+end_src
 
 ** Loss function and optimizer
 
+#+NAME: dc5e8950-b90a-4749-9200-4c73be794f46
 #+begin_src ein-python
   loss_fn = nn.CrossEntropyLoss()
   optimizer = optim.Adam(model.parameters(), lr=1e-1)
 #+end_src
 
-** Training loop main function
+** TODO Training loop main function
 
 #+NAME: fdfea3c4-3556-4d93-90d1-702759d45754
 #+begin_src ein-python
-  def training_loop(n_epochs, optimizer, model, train_loader, loss_fn):
-    
+  def training_loop(n_epochs, optimizer, model, train_loader, val_loader, loss_fn):
+      """Training loop for MNIST classification task."""
+
+      model.cuda()
+      use_cuda = config.use_cuda
+
       for epoch in range(1, n_epochs+1):
-          cnt = 0
-          for batch in train_loader:
-              if cnt > 3: break
-              cnt += 1
-              images = batch[0]
-              targets = batch[1]
-              print(f"images: (dtype={images.dtype}, shape={images.shape}), grad={images.requires_grad}")
-              print(f"targets: (dtype={targets.dtype}, shape={targets.shape})")
-              print("model", model, model.forward)
+          print("Training: ", end="")
+          model.train(True)
+
+          epoch_start_time = time.time()
+          for idx_batch, batch in enumerate(train_loader):
+              samples, targets = batch[0], batch[1]
+              if use_cuda:
+                  samples = samples.to(device="cuda")
+                  targets = targets.to(device="cuda")
+
               optimizer.zero_grad()
-            
+              output_model = model(samples)
+              loss = loss_fn(output_model, targets)
+              loss.backward()
+              optimizer.step()
 
-              # output_model = model(images)
-              # loss = loss_fn(output_model, targets)
-              # loss.backward()
+              if idx_batch % 200 == 0:
+                  print(".", end="", flush=True)
+          print()
 
-              # optimizer.step() # "learn"
+          print("Validation: ", end="")
+          model.train(False)
+          with torch.inference_mode():
+              val_results_current_epoch = {"correct": 0, "total": 0}
+              for idx_batch, batch in enumerate(val_loader):
+                  samples, targets = batch[0], batch[1]
+                  if use_cuda:
+                      samples = samples.cuda()
 
-              # if (epoch % 500) == 0:
-              #     print(f"Epoch {epoch}, Loss {loss:.3f}")
+                  output_model = model(samples)
+                  model_predictions = torch.argmax(output_model, dim=1)
+                
+                  if use_cuda:
+                      model_predictions = model_predictions.to(device="cpu").numpy()
+                  expected_predictions = targets.numpy()
+                
+                  num_correct_predictions = (model_predictions == expected_predictions).sum()
+                  val_results_current_epoch["correct"] += num_correct_predictions
+                  val_results_current_epoch["total"] += len(expected_predictions)
+
+                  if idx_batch % 200 == 0:
+                      print(".", end="", flush=True)
+          print()
+          # ---
+          epoch_end_time = time.time()
+          print(f" --> Epoch {epoch}")
+          print(f"Final training loss: {loss:.3f}")
+          print(f"Validation correct predictions: {100*(val_results_current_epoch['correct'] / val_results_current_epoch['total']):.2f}%")
+          print(f"Time: {epoch_end_time - epoch_start_time:.2f} seconds")
+          print("-"*60)
+
 #+end_src
 
 #+NAME: 045e6d9b-7f72-4676-adc8-8b2ccbc573a7
 #+begin_src ein-python :results output
+  train_data, val_data = make_data(config.data.path_to_data)
+  train_dp = make_MNIST_training_datapipe(train_data, config.data, random_state=100)
+  val0_dp = make_MNIST_validation_datapipe(train_data, val_data=val_data, idx_val_split=0, data_config=config.data, random_state=100)
+  train_loader = make_dataloader2(train_dp, num_workers=config.data.training.num_workers)
+  val0_loader = make_dataloader2(val0_dp, num_workers=config.data.validation.num_workers)
+
   training_loop(
       n_epochs=1,
       optimizer=optimizer,
       model=model,
-      train_loader=dp_train_loader,
+      train_loader=train_loader,
+      val_loader=val0_loader,
       loss_fn=loss_fn,
   )
 #+end_src
