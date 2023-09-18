@@ -6,7 +6,7 @@ authors = [
 ]
 description = "Code for the Kaggle Digit Recognizer competition."
 readme = "README.md"
-requires-python = ">=3.10,<3.11"
+requires-python = ">=3.10,<3.12"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",

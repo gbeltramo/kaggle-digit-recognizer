@@ -6,5 +6,5 @@ __pycache__/
 *.egg-info/
 
 # files to be excluded
-*.ipynb
+test_*.ipynb
 !ein_server.ipynb
