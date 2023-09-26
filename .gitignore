@@ -4,6 +4,8 @@ ein-images/
 __pycache__/
 .ipynb_checkpoints/
 *.egg-info/
+*.gv
+*.pdf
 
 # files to be excluded
 test_*.ipynb

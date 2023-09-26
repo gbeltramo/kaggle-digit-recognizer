@@ -49,6 +49,16 @@ Including ~kaggland.digrec~
 #+end_src
 
 #+RESULTS: a028d7b1-d5d8-4f99-a77b-5228a716cd6c
+| --------------------------------------------------------------------------- |
+| ModuleNotFoundError                       Traceback (most recent call last) |
+| Cell In[2], line 11                                                         |
+| 9 import numpy as np                                                        |
+| 10 import torch                                                             |
+| ---> 11 import torchdata.dataloader2 as dataloader2                         |
+| 12 from torchdata.datapipes.map import SequenceWrapper                      |
+| 13 import torch.nn as nn                                                    |
+|                                                                             |
+| ModuleNotFoundError: No module named 'torchdata'                            |
 
 * Config
 Using [[https://omegaconf.readthedocs.io/en/latest/][OmegaConf]] to create a config that can use the ~${other.field}~ syntax and
@@ -87,6 +97,26 @@ Using [[https://omegaconf.readthedocs.io/en/latest/][OmegaConf]] to create a con
 #+end_src
 
 #+RESULTS: b6aa5b80-111b-4680-b785-96ce42024b34
+| ---------------------------------------------------------------------------                             |
+| NameError                                 Traceback (most recent call last)                             |
+| Cell In[1], line 1                                                                                      |
+| ----> 1 python_version = subprocess.run(                                                                |
+| 2     ["python", "--version"],                                                                          |
+| 3     capture_output=True).stdout.decode("utf-8").replace("Python", "").strip()                         |
+| 5 base_config = {                                                                                       |
+| 6     "info" : {                                                                                        |
+| 7         "python_version" : python_version,                                                            |
+| (...)                                                                                                   |
+| 11     "use_cuda": True,                                                                                |
+| 12 }                                                                                                    |
+| 14 data_config = {                                                                                      |
+| 15     "data": {                                                                                        |
+| 16         "path_to_data" : pathlib.Path.home() / "data" / "kaggle" / "digit-recognizer" / "train.csv", |
+| (...)                                                                                                   |
+| 27     },                                                                                               |
+| 28 }                                                                                                    |
+|                                                                                                         |
+| NameError: name 'subprocess' is not defined                                                             |
 
 #+NAME: 8c6d20ec-8b1a-43dc-9acc-8640cccc1f40
 #+begin_src ein-python
