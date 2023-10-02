@@ -23,9 +23,9 @@ def random_translation(
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Randomly translate one 2d images in-place."""
 
-    assert image.ndim == 2, f"{image.shape=} needs to be (L, W)"
-    assert max_translation_offset < image.shape[0], "The maximum translation offset is too big"
+    assert image.ndim == 3, f"{image.shape=} needs to be (num_channels, L, W)"
     assert max_translation_offset < image.shape[1], "The maximum translation offset is too big"
+    assert max_translation_offset < image.shape[2], "The maximum translation offset is too big"
     assert max_translation_offset >= 1, "The maximum translation offset needs to be greater than 0"
 
     prob = np.random.random()
@@ -66,21 +66,21 @@ def _generate_random_translation_offset(max_translation_offset: int, random_seed
 @numba.jit(nopython=True, fastmath=True, cache=True)
 def _numba_translation(image, transl_offset):
     y_offset, x_offset = transl_offset
-    y_len, x_len = image.shape
+    _, y_len, x_len = image.shape
 
     if y_offset > 0:
-        image[y_offset:, :] = image[0 : y_len - y_offset, :]
-        image[0:y_offset, :] = 0
+        image[:, y_offset:, :] = image[:, 0 : y_len - y_offset, :]
+        image[:, 0:y_offset, :] = 0
     elif y_offset < 0:
-        image[0:y_offset, :] = image[-(y_len + y_offset) :, :]
-        image[y_offset:, :] = 0
+        image[:, 0:y_offset, :] = image[:, -(y_len + y_offset) :, :]
+        image[:, y_offset:, :] = 0
 
     if x_offset > 0:
-        image[:, x_offset:] = image[:, 0 : x_len - x_offset]
-        image[:, 0:x_offset] = 0
+        image[:, :, x_offset:] = image[:, :, 0 : x_len - x_offset]
+        image[:, :, 0:x_offset] = 0
     elif x_offset < 0:
-        image[:, 0:x_offset] = image[:, -(x_len + x_offset) :]
-        image[:, x_offset:] = 0
+        image[:, :, 0:x_offset] = image[:, :, -(x_len + x_offset) :]
+        image[:, :, x_offset:] = 0
 
 
 def random_batch_translation(
@@ -95,9 +95,9 @@ def random_batch_translation(
     if len(images) == 0:
         return res.Aug()
 
-    assert images.ndim == 3, f"{images.shape=} needs to be (batch_size, L, W)"
-    assert max_translation_offset < images.shape[1], "The maximum translation offset is too big"
+    assert images.ndim == 4, f"{images.shape=} needs to be (batch_size, num_channels, L, W)"
     assert max_translation_offset < images.shape[2], "The maximum translation offset is too big"
+    assert max_translation_offset < images.shape[3], "The maximum translation offset is too big"
     assert max_translation_offset >= 1, "The maximum translation offset needs to be greater than 0"
 
     np.random.seed(random_seed)

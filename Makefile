@@ -22,10 +22,16 @@ install-editable:
 	$(PYTHON) -m pip install -v --editable .
 
 test:
+	$(PYTHON) -m pytest tests/test_utils/test_preprocessing/
+	$(PYTHON) -m pytest tests/test_digrec/
+
+test-verbose:
 	$(PYTHON) -m pytest -v -rP tests/test_utils/test_preprocessing/
+	$(PYTHON) -m pytest -v -rP tests/test_digrec/
 
 format:
-	$(PYTHON) -m black --line-length 100 --target-version py311 .
+	$(PYTHON) -m black --line-length 100 --target-version py311 src/
+	$(PYTHON) -m black --line-length 100 --target-version py311 tests/
 
 activate:
 	mamba deactivate
